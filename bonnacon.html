@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#1a1510">
+<title>BONNACON — webcade cabinet</title>
+<style>
+:root{--ink:#1a1510;--parch:#f0e7d0;--brown:#8a5a2b;--sage:#8fa276;--slate:#7e93a8;
+  --rubric:#a33327;--dim:#8a8172;--line:#2e2718}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{background:var(--ink);color:var(--parch);font-family:"Courier New",ui-monospace,monospace;
+  display:flex;flex-direction:column;align-items:center;user-select:none;height:100dvh;
+  overflow:hidden;overscroll-behavior:none;-webkit-touch-callout:none;
+  padding-bottom:env(safe-area-inset-bottom)}
+.cab{width:min(100vw,480px);display:flex;flex-direction:column;height:100%}
+.marquee{padding:9px 8px 5px;text-align:center;border-bottom:1px solid var(--line)}
+.marquee h1{font-size:clamp(19px,5.6vw,28px);letter-spacing:.3em;font-weight:700;color:var(--parch)}
+.marquee .tag{margin-top:2px;font-size:10px;letter-spacing:.2em;color:var(--dim)}
+.controlsline{padding:5px 8px;text-align:center;font-size:10px;letter-spacing:.1em;color:var(--dim);
+  border-bottom:1px solid var(--line)}
+.controlsline b{color:var(--sage)}
+.hud{display:flex;justify-content:space-between;padding:5px 10px;font-size:11px;letter-spacing:.12em;
+  border-bottom:1px solid var(--line);background:#201a12}
+.hud .lbl{color:var(--dim);font-size:9px;letter-spacing:.2em}
+.hud b{color:var(--parch)}
+#hgut{color:var(--sage)}
+#wrap{flex:1;min-height:0;display:flex;align-items:flex-start;justify-content:center;line-height:0}
+#frame{position:relative;margin:0 auto}
+canvas#game{width:100%;height:100%;display:block;background:var(--parch);touch-action:none}
+.ovl{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:13px;background:rgba(26,21,16,.87);text-align:center;padding:22px;line-height:1.55}
+.ovl[hidden]{display:none}
+.ovl h2{font-size:20px;letter-spacing:.26em;color:var(--parch)}
+.ovl p{font-size:11.5px;color:#d5cbb2;letter-spacing:.06em;max-width:46ch}
+.btn{font-family:inherit;font-size:13px;letter-spacing:.2em;font-weight:700;color:var(--ink);
+  background:var(--parch);border:0;padding:14px 26px;cursor:pointer}
+.btn:active{transform:translateY(1px)}
+.foot{padding:8px;text-align:center;font-size:8.5px;letter-spacing:.14em;color:#645c4c;line-height:1.6}
+@media (max-height:720px){.marquee{padding:5px 8px 3px}.marquee h1{font-size:18px}.foot{display:none}}
+@media (max-height:600px){.controlsline{display:none}}
+</style>
+</head>
+<body>
+<div class="cab">
+  <div class="marquee" id="marquee"><h1>BONNACON</h1>
+    <div class="tag">FUGA TONANTE · A WEBCADE CABINET</div></div>
+  <div class="controlsline" id="cline"><b>HOLD ANYWHERE</b> — LOOSE THE GUT · IT SCORCHES THEM AND HURLS YOU ON · GRAZE THE IVY TO REFILL</div>
+  <div class="hud" id="hudbar">
+    <span><span class="lbl">FURLONGS </span><b id="hfur">0.0</b></span>
+    <span><span class="lbl">SCORCHED </span><b id="hscorch">0</b></span>
+    <span><span class="lbl">GUT </span><b id="hgut">████████</b></span>
+  </div>
+  <div id="wrap">
+   <div id="frame">
+    <canvas id="game" width="480" height="600"></canvas>
+    <div class="ovl" id="startOvl">
+      <h2>BONNACON</h2>
+      <p>Of Asia is born a beast called bonnacon, with a bull's head and horns so
+      curled inward they are useless for battle. When hunted, it flees — and while
+      fleeing, its defence departs the other end, with such force and heat that it
+      scorches whatever follows.</p>
+      <p style="color:var(--sage)">You are the bonnacon. The jet is your shield AND your gallop —
+      but the gut runs dry. Eat ivy as you flee.</p>
+      <p id="seedLine" style="color:#7c7361"></p>
+      <button class="btn" id="playBtn">FLEE</button>
+    </div>
+    <div class="ovl" id="doneOvl" hidden>
+      <h2>CAPTUS EST</h2>
+      <p id="doneLine"></p>
+      <p id="bestLine"></p>
+      <button class="btn" id="againBtn">FLEE AGAIN</button>
+    </div>
+   </div>
+  </div>
+  <div class="foot" id="foot">AFTER THE MEDIEVAL BESTIARIES & PLINY THE ELDER, NAT. HIST. VIII · THE GREEN CLOUD IN THE MARGIN IS EXACTLY WHAT YOU THINK IT IS</div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   BONNACON — flee. blast. graze. An endless bestiary chase.
+   Webcade conventions:
+     · seeded & deterministic pursuit script (?seed=… or daily)
+     · one action (hold anywhere / SPACE)
+     · host events: {bonnacon:"start"|"gameOver", score, furlongs,
+                     scorched, seed}
+   Art: illuminated manuscript. Parchment with ruled lines and
+   faint verso show-through, confident ink outlines with flat
+   wash fills, scalloped brown ground, trefoil ivy, blackletter
+   caption strip with a red-and-blue versal. The beast's eyes
+   always look back at what pursues it.
+   ============================================================ */
+const W=480,H=600,GROUND=430,CAPT=520;   // CAPT = caption strip top
+const DPR=Math.min(2,(typeof devicePixelRatio!=="undefined"?devicePixelRatio:1)||1);
+const cvs=document.getElementById("game");cvs.width=W*DPR;cvs.height=H*DPR;
+const ctx=cvs.getContext("2d");ctx.setTransform(DPR,0,0,DPR,0,0);
+const REDUCE=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const TAU=6.28318,clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+function emit(type,extra){try{const m=Object.assign({bonnacon:type},extra||{});
+  if(parent&&parent!==window)parent.postMessage(m,"*");
+  dispatchEvent(new CustomEvent("bonnacon",{detail:m}));}catch(_){}}
+function buzz(ms){try{if(typeof navigator!=="undefined"&&navigator.vibrate)navigator.vibrate(ms);}catch(_){}}
+
+/* ---------- seed ---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;
+  return((t^t>>>14)>>>0)/4294967296;}}
+function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+const qs=new URLSearchParams(location.search);
+const SEED_STR=qs.get("seed")||new Date().toISOString().slice(0,10);
+const SEED=hashStr(SEED_STR);
+document.getElementById("seedLine").textContent="SEED: "+SEED_STR;
+
+/* ---------- palette ---------- */
+const INK="#241c10",PARCH="#f0e7d0",BROWN="#8a5a2b",TAN="#c39a63",SAGE="#8fa276",
+      SLATE="#7e93a8",RUBRIC="#a33327",AZUR="#2e4c86";
+const DKBROWN="#5e3d1c";
+
+/* ---------- audio ---------- */
+let AC=null;
+function initAudio(){if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(_){}}
+  if(AC&&AC.state==="suspended")AC.resume();}
+function tone(f,d,type,g,f1,delay){if(!AC)return;
+  try{const o=AC.createOscillator(),gn=AC.createGain(),t=AC.currentTime+(delay||0);
+  o.type=type;o.frequency.setValueAtTime(f,t);
+  if(f1)o.frequency.exponentialRampToValueAtTime(Math.max(20,f1),t+d);
+  gn.gain.setValueAtTime(g,t);gn.gain.exponentialRampToValueAtTime(.0001,t+d);
+  o.connect(gn);gn.connect(AC.destination);o.start(t);o.stop(t+d);}catch(_){}}
+let noiseBuf=null;
+function noise(d,g,fc){if(!AC)return;
+  try{if(!noiseBuf){noiseBuf=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);
+    const ch=noiseBuf.getChannelData(0);for(let i=0;i<ch.length;i++)ch[i]=Math.random()*2-1;}
+  const s=AC.createBufferSource(),gn=AC.createGain(),f=AC.createBiquadFilter();
+  s.buffer=noiseBuf;f.type="bandpass";f.frequency.value=fc||300;f.Q.value=0.7;
+  gn.gain.setValueAtTime(g,AC.currentTime);gn.gain.exponentialRampToValueAtTime(.0001,AC.currentTime+d);
+  s.connect(f);f.connect(gn);gn.connect(AC.destination);s.start();s.stop(AC.currentTime+d);}catch(_){}}
+const sJet=()=>{noise(.16,.12,180);tone(90,.14,"sawtooth",.03,60);};
+const sScorch=()=>{tone(660,.2,"square",.04,220);noise(.3,.1,900);};
+const sYelp=()=>tone(1200,.18,"square",.04,1800);
+const sEat=()=>tone(520,.08,"triangle",.05,620);
+const sCaught=()=>{[330,262,196,131].forEach((f,i)=>tone(f,.3,"sawtooth",.06,undefined,i*.14));};
+const sHorn=()=>{tone(220,.5,"sawtooth",.05,215);tone(331,.5,"sawtooth",.03,326,.05);};
+
+/* ---------- game state ---------- */
+let mode="menu",rng=null,t0=0;
+let px=150;                       // bonnacon screen x (drifts with speed)
+let wx=0;                         // world distance
+let v=0,vBase=170,gut=1,jet=false,jetT=0,stride=0,shake=0;
+let pursuers=[],ivies=[],humps=[],puffs=[],witnesses=[],scorched=0;
+let nextSpawn=0,nextIvy=0,nextHump=0,nextWit=0,grabT=0,capIdx=0,capT=0;
+const FURLONG=2600;               // world px per furlong (game scale)
+let best=(function(){try{const v2=parseFloat(localStorage.getItem("webcade_bonnacon_best"));return isFinite(v2)?v2:null;}catch(_){return null;}})();
+
+const CAPTIONS=[
+ ["A","sia nascitur animal quod bonnacon dicitur, cui taurinum caput."],
+ ["C","ornua ita in se reflexa, ut nullum vulnus efficiant."],
+ ["F","ugiens, ventris proluvie se defendit — per longitudinem trium iugerum."],
+ ["Q","uidquid attigerit, velut ignis adurit. — Plinius, VIII"],
+ ["C","anes sequentes cauda fumante redeunt."],
+ ["N","aso obturato venator prudens accedit."]];
+
+function reset(){
+  rng=mulberry32(SEED^0xB0CA);
+  wx=0;v=vBase;gut=1;jet=false;stride=0;scorched=0;grabT=0;capIdx=0;capT=0;
+  pursuers=[];ivies=[];humps=[];puffs=[];witnesses=[];
+  nextSpawn=2.2;nextIvy=3.2;nextHump=1.0;nextWit=6;t0=0;
+  // starting pair of hunters just behind (the two from the plate)
+  pursuers.push(mkP("hunter",-210),mkP("noser",-290));
+  for(let i=0;i<4;i++){humps.push({x:200+i*260+rng()*80,w:120+rng()*90,h:16+rng()*20});}
+}
+function mkP(kind,behind){
+  const base={x:wx+behind,kind,hp:1,burn:0,fly:0,ph:rng()*TAU,id:(rng()*1e9)|0};
+  if(kind==="dog")Object.assign(base,{spd:vBase*1.34,grab:26});
+  else if(kind==="hunter")Object.assign(base,{spd:vBase*1.16,grab:34});
+  else if(kind==="noser")Object.assign(base,{spd:vBase*1.12,grab:34});
+  else if(kind==="shield")Object.assign(base,{spd:vBase*1.10,grab:36,hp:2});
+  else if(kind==="rider")Object.assign(base,{spd:vBase*1.5,grab:40});
+  return base;
+}
+function start(){
+  initAudio();reset();mode="play";hud();hideAll();sHorn();
+  emit("start",{seed:SEED_STR});
+}
+function hud(){
+  document.getElementById("hfur").textContent=(wx/FURLONG).toFixed(1);
+  document.getElementById("hscorch").textContent=scorched;
+  const n=Math.round(gut*8);
+  document.getElementById("hgut").textContent="█".repeat(n)+"░".repeat(8-n);
+}
+function show(id){hideAll();document.getElementById(id).hidden=false;}
+function hideAll(){for(const id of["startOvl","doneOvl"])document.getElementById(id).hidden=true;}
+function gameOver(){
+  mode="done";sCaught();buzz([50,60,90]);
+  const fur=wx/FURLONG,score=Math.round(fur*100)+scorched*25;
+  const isBest=best===null||score>best;
+  if(isBest){best=score;try{localStorage.setItem("webcade_bonnacon_best",String(score));}catch(_){}}
+  document.getElementById("doneLine").textContent=
+    "SCORE "+score+" · "+fur.toFixed(1)+" FURLONGS · "+scorched+" PURSUERS SCORCHED";
+  document.getElementById("bestLine").textContent=isBest?"NEW BEST":"BEST "+best;
+  show("doneOvl");
+  emit("gameOver",{score,furlongs:+fur.toFixed(2),scorched,seed:SEED_STR});
+}
+
+/* ---------- input: one held action, anywhere ---------- */
+function down(e){if(e&&e.preventDefault)e.preventDefault();initAudio();
+  if(mode==="play")jet=true;}
+function up(){jet=false;}
+cvs.addEventListener("pointerdown",down);
+addEventListener("pointerup",up);addEventListener("pointercancel",up);
+addEventListener("keydown",e=>{if(e.code==="Space"&&!e.repeat){e.preventDefault();down();}});
+addEventListener("keyup",e=>{if(e.code==="Space")up();});
+document.getElementById("playBtn").onclick=start;
+document.getElementById("againBtn").onclick=start;
+
+/* ---------- update ---------- */
+function slopeAt(x){ // ground humps slow the climb
+  for(const h of humps){const d=x-h.x;
+    if(d>-h.w/2&&d<h.w/2)return Math.cos(d/h.w*Math.PI)* (h.h/28);}
+  return 0;
+}
+function update(dt){
+  if(mode!=="play")return;
+  t0+=dt;capT+=dt;
+  if(capT>5){capT=0;capIdx=(capIdx+1)%CAPTIONS.length;}
+  // difficulty ramps with distance
+  const fur=wx/FURLONG,ramp=1+fur*0.10;
+  // jet
+  if(jet&&gut>0){
+    jetT+=dt;gut=Math.max(0,gut-dt*0.34);
+    v+=340*dt;                                   // recoil is propulsion
+    if(((jetT*7)|0)!==(((jetT-dt)*7)|0)){sJet();buzz(6);}
+    // caustic cloud particles
+    if(!REDUCE)puffs.push({x:wx-40+ (Math.random()-.5)*10,y:GROUND-34+(Math.random()-.5)*26,
+      r:8+Math.random()*8,t:0.9,tm:0.9,vx:-90-Math.random()*60});
+    // scorch pursuers in the cone (a "pitch" behind — generous)
+    for(const p of pursuers){
+      if(p.fly>0)continue;
+      const d=wx-p.x;
+      if(d>0&&d<330){
+        p.burn+=dt*(d<160?2.4:1.2);
+        if(p.burn>= (p.kind==="shield"?1.5:0.7)*p.hp){
+          p.fly=1;scorched++;sScorch();buzz(14);
+          if(p.kind==="dog")sYelp();
+          hud();
+        }
+      }
+    }
+  }else jetT=0;
+  // speed: decay to base, slopes bite
+  const slope=slopeAt(wx);
+  v+= (vBase*ramp-v)*dt*1.4;
+  v-=slope*260*dt;
+  v=clamp(v,90,620);
+  wx+=v*dt;stride+=dt*(v/34);
+  // bonnacon screen x eases with speed (surging feel)
+  px+=((150+(v-vBase)/620*70)-px)*dt*3;
+  // spawns (deterministic)
+  if(t0>=nextSpawn){
+    nextSpawn=t0+ clamp(2.6/ramp,0.9,2.6)+rng()*1.2;
+    const roll=rng();
+    const kind=fur<0.5?(roll<.6?"hunter":"dog")
+      :fur<1.2?(roll<.35?"dog":roll<.7?"hunter":roll<.9?"noser":"shield")
+      :(roll<.3?"dog":roll<.5?"hunter":roll<.75?"shield":roll<.92?"noser":"rider");
+    pursuers.push(mkP(kind,-(300+rng()*140)));
+  }
+  if(t0>=nextIvy){nextIvy=t0+3.4+rng()*2.6;
+    ivies.push({x:wx+560+rng()*160,got:false,ph:rng()*TAU,id:(rng()*1e9)|0});}
+  if(t0>=nextHump){nextHump=t0+1.4+rng()*1.4;
+    humps.push({x:wx+700+rng()*200,w:110+rng()*110,h:14+rng()*26*Math.min(2,ramp)});}
+  if(t0>=nextWit){nextWit=t0+9+rng()*8;
+    witnesses.push({x:wx+640+rng()*120,id:(rng()*1e9)|0});}
+  humps=humps.filter(h=>h.x>wx-500);
+  witnesses=witnesses.filter(h=>h.x>wx-500);
+  // ivy grazing
+  for(const iv of ivies){
+    if(!iv.got&&Math.abs(iv.x-wx)<34){iv.got=true;gut=Math.min(1,gut+0.34);sEat();buzz(8);hud();}
+  }
+  ivies=ivies.filter(iv=>iv.x>wx-460&&!(iv.got&&Math.abs(iv.x-wx)>120));
+  // pursuers
+  let nearest=1e9;
+  for(const p of pursuers){
+    if(p.fly>0){p.fly+=dt;p.x-=200*dt;continue;}
+    const gap=wx-p.x;
+    // pursue: faster when far (pack instinct), hesitant inside the cloud
+    let sp=p.spd*ramp*(gap>360?1.25:1);
+    if(jet&&gut>0&&gap<330&&gap>0)sp*= (p.kind==="shield"?0.75:0.35);
+    p.x+=sp*dt;p.ph+=dt*8;
+    if(gap<nearest)nearest=gap;
+    if(gap<p.grab){grabT+=dt;if(grabT>0.38){gameOver();return;}}
+  }
+  if(nearest>60)grabT=Math.max(0,grabT-dt*2);
+  pursuers=pursuers.filter(p=>p.fly<2.4&&p.x>wx-900);
+  // puffs
+  for(const q of puffs){q.t-=dt;q.x+=q.vx*dt;q.y-=8*dt;}
+  puffs=puffs.filter(q=>q.t>0);
+  if(shake>0)shake=Math.max(0,shake-dt*9);
+  if(((t0*2)|0)!==(((t0-dt)*2)|0))hud();
+}
+
+/* ---------- drawing helpers ---------- */
+function wash(c,fill,alpha,fn){c.save();c.globalAlpha=alpha==null?.9:alpha;
+  c.fillStyle=fill;fn();c.fill();c.restore();
+  c.strokeStyle=INK;c.lineWidth=2;fn();c.stroke();c.lineWidth=1;}
+function sx(x){return px+(x-wx);}   // world→screen
+
+/* parchment page with ruled lines + verso show-through */
+let pageLayer=null;
+function bakePage(){
+  const o=document.createElement("canvas");o.width=W*DPR;o.height=H*DPR;
+  const c=o.getContext("2d");c.setTransform(DPR,0,0,DPR,0,0);
+  c.fillStyle=PARCH;c.fillRect(0,0,W,H);
+  const r=mulberry32(SEED^0x9A);
+  // parchment mottle
+  for(let i=0;i<900;i++){c.fillStyle=r()<.5?"rgba(138,90,43,.03)":"rgba(240,231,208,.05)";
+    c.beginPath();c.arc(r()*W,r()*H,2+r()*8,0,TAU);c.fill();}
+  // ruled lines
+  c.strokeStyle="rgba(138,90,43,.18)";c.lineWidth=1;
+  for(let y=40;y<CAPT-10;y+=26){c.beginPath();c.moveTo(16,y);c.lineTo(W-16,y);c.stroke();}
+  // verso show-through: rows of faint mirrored minim clusters
+  c.fillStyle="rgba(74,58,32,.07)";
+  for(let y=52;y<GROUND-60;y+=26){
+    let x=24+r()*30;
+    while(x<W-30){
+      const word=2+Math.floor(r()*5);
+      for(let m=0;m<word;m++){c.fillRect(x,y-9,1.6,10);x+=3.4;}
+      if(r()<.3)c.fillRect(x-word*3.4+r()*word*3,y-13,1.6,4); // ascender
+      x+=6+r()*8;
+    }
+  }
+  // tiny red correction mark, like the plate's
+  c.fillStyle=RUBRIC;c.globalAlpha=.5;c.fillRect(W*0.55,150,6,4);c.globalAlpha=1;
+  // caption strip rule
+  c.strokeStyle="rgba(36,28,16,.5)";c.beginPath();c.moveTo(14,CAPT-6);c.lineTo(W-14,CAPT-6);c.stroke();
+  pageLayer=o;
+}
+
+/* the beast — always glancing back */
+function drawBonnacon(c){
+  const bx=px,by=GROUND-40;
+  const g=Math.sin(stride),g2=Math.sin(stride+Math.PI);
+  const blast=jet&&gut>0;
+  c.save();c.translate(bx,by);
+  // tail: up and streaming when blasting
+  c.strokeStyle=BROWN;c.lineWidth=7;c.lineCap="round";
+  c.beginPath();c.moveTo(-52,-14);
+  c.quadraticCurveTo(-72,blast?-58:-42,blast?-64:-84,blast?-78:-30);c.stroke();
+  c.strokeStyle=INK;c.lineWidth=2;
+  c.beginPath();c.moveTo(-52,-14);
+  c.quadraticCurveTo(-72,blast?-58:-42,blast?-64:-84,blast?-78:-30);c.stroke();
+  // hind legs (galloping)
+  leg(c,-40,-4,g,true);leg(c,-30,-4,g2*0.7,true);
+  // fore legs
+  leg(c,34,-4,g2,false);leg(c,44,-4,g*0.7,false);
+  // body
+  wash(c,TAN,.95,()=>{c.beginPath();
+    c.moveTo(-52,-16);
+    c.quadraticCurveTo(-30,-40,10,-38);
+    c.quadraticCurveTo(46,-36,58,-22);
+    c.quadraticCurveTo(66,-8,52,0);
+    c.quadraticCurveTo(10,10,-34,4);
+    c.quadraticCurveTo(-56,0,-52,-16);c.closePath();});
+  // belly shade
+  c.strokeStyle="rgba(94,61,28,.55)";c.lineWidth=3;
+  c.beginPath();c.moveTo(-30,2);c.quadraticCurveTo(8,9,44,0);c.stroke();
+  // head: raised, TURNED BACK toward pursuers
+  c.save();c.translate(58,-30);c.rotate(-0.12);
+  wash(c,TAN,.95,()=>{c.beginPath();
+    c.moveTo(0,-2);c.quadraticCurveTo(6,-18,-2,-26);
+    c.quadraticCurveTo(-16,-34,-30,-26);
+    c.quadraticCurveTo(-38,-20,-34,-10);
+    c.quadraticCurveTo(-26,0,-8,2);c.closePath();});
+  // muzzle toward the rear (looking back!)
+  wash(c,DKBROWN,.85,()=>{c.beginPath();c.ellipse(-32,-16,7,5.4,0.25,0,TAU);c.closePath();});
+  // the famous worried side-eye
+  c.fillStyle="#fff";c.beginPath();c.ellipse(-16,-20,5.4,4.4,0,0,TAU);c.fill();
+  c.strokeStyle=INK;c.lineWidth=1.6;c.beginPath();c.ellipse(-16,-20,5.4,4.4,0,0,TAU);c.stroke();
+  c.fillStyle=INK;c.beginPath();c.arc(-19,-20,2.1,0,TAU);c.fill();
+  c.fillStyle=RUBRIC;c.globalAlpha=.5;c.beginPath();c.arc(-13,-21,1.2,0,TAU);c.fill();c.globalAlpha=1;
+  // ears
+  wash(c,TAN,.95,()=>{c.beginPath();c.ellipse(2,-24,7,3.4,0.5,0,TAU);c.closePath();});
+  // curled-in useless horns (navy spirals, as in the plate)
+  for(const s of[-1,1]){
+    c.save();c.translate(s<0?-6:6,-32);
+    c.strokeStyle=AZUR;c.lineWidth=4.4;c.beginPath();
+    let a=Math.PI*0.5,rr=12;
+    c.moveTo(Math.cos(a)*rr*s,-Math.sin(a)*rr);
+    for(let i=0;i<26;i++){a+=0.24;rr*=0.915;
+      c.lineTo(Math.cos(a)*rr*s,-Math.sin(a)*rr-i*0.4);}
+    c.stroke();
+    c.strokeStyle=INK;c.lineWidth=1.4;c.stroke();
+    c.restore();
+  }
+  c.restore();
+  c.restore();
+  function leg(c2,ox,oy,ph,hind){
+    const kx=ox+(hind?-6:5)*ph,ky=oy+16;
+    const fx=ox+(hind?-14:12)*ph,fy=oy+34-Math.max(0,ph)*8;
+    c2.strokeStyle=TAN;c2.lineWidth=7;c2.lineCap="round";
+    c2.beginPath();c2.moveTo(ox,oy);c2.lineTo(kx,ky);c2.lineTo(fx,fy);c2.stroke();
+    c2.strokeStyle=INK;c2.lineWidth=1.8;
+    c2.beginPath();c2.moveTo(ox,oy);c2.lineTo(kx,ky);c2.lineTo(fx,fy);c2.stroke();
+    // cloven hoof
+    c2.fillStyle=DKBROWN;c2.beginPath();c2.arc(fx,fy+2,3.2,0,TAU);c2.fill();
+  }
+}
+/* the jet + cloud */
+function drawJet(c){
+  if(!(jet&&gut>0))return;
+  const jx=px-58,jy=GROUND-52;
+  const r=Math.random;
+  c.save();
+  // cone of sage wash (the plate's green cloud)
+  c.globalAlpha=.5;c.fillStyle=SAGE;
+  c.beginPath();c.moveTo(jx,jy);
+  c.quadraticCurveTo(jx-120,jy-30+r()*10,jx-300,jy-40+r()*20);
+  c.lineTo(jx-300,jy+34);
+  c.quadraticCurveTo(jx-120,jy+30,jx,jy+8);c.closePath();c.fill();
+  // speed-lines
+  c.globalAlpha=.85;c.strokeStyle=DKBROWN;c.lineWidth=2;
+  for(let i=0;i<4;i++){const yy=jy-14+i*10+r()*4;
+    c.beginPath();c.moveTo(jx-8,yy);c.lineTo(jx-150-r()*140,yy+(r()-.5)*10);c.stroke();}
+  // spatter stars
+  c.fillStyle=DKBROWN;
+  for(let i=0;i<5;i++){const xx=jx-40-r()*230,yy=jy-24+r()*52;
+    for(let a2=0;a2<TAU;a2+=TAU/5){
+      c.fillRect(xx+Math.cos(a2)*3,yy+Math.sin(a2)*3,1.6,1.6);}}
+  c.restore();
+}
+/* pursuers, plate-style */
+function drawPursuer(c,p){
+  const x=sx(p.x),y=GROUND-8;
+  if(x<-80||x>W+80)return;
+  c.save();c.translate(x,y);
+  if(p.fly>0){c.rotate(-p.fly*2.4);c.translate(0,-p.fly*36);}
+  const ph=Math.sin(p.ph);
+  const burnt=p.burn>0.25;
+  if(p.kind==="dog"){
+    c.scale(0.9,0.9);
+    wash(c,TAN,.9,()=>{c.beginPath();
+      c.moveTo(-20,-14);c.quadraticCurveTo(0,-22,18,-14);
+      c.quadraticCurveTo(26,-8,18,-4);c.quadraticCurveTo(0,0,-18,-4);c.closePath();});
+    // legs
+    c.strokeStyle=INK;c.lineWidth=2;
+    for(const [ox,dir] of[[-14,1],[12,-1]]){
+      c.beginPath();c.moveTo(ox,-4);c.lineTo(ox+dir*6*ph,8);c.stroke();
+      c.beginPath();c.moveTo(ox+5,-4);c.lineTo(ox+5-dir*6*ph,8);c.stroke();}
+    // head + snout forward
+    wash(c,TAN,.9,()=>{c.beginPath();c.ellipse(24,-16,8,6,0,0,TAU);c.closePath();});
+    c.fillStyle=INK;c.beginPath();c.arc(27,-17,1.4,0,TAU);c.fill();
+    // smoking tail when burnt / flying
+    if(burnt||p.fly>0){c.strokeStyle=DKBROWN;c.globalAlpha=.7;
+      c.beginPath();c.moveTo(-22,-16);c.quadraticCurveTo(-30,-26,-26,-34);c.stroke();c.globalAlpha=1;}
+  }else{
+    const tunic=p.kind==="noser"?SLATE:p.kind==="shield"?TAN:p.kind==="rider"?RUBRIC:SAGE;
+    // legs mid-stride
+    c.strokeStyle=INK;c.lineWidth=2.6;
+    c.beginPath();c.moveTo(0,-26);c.lineTo(-6+8*ph,0);c.stroke();
+    c.beginPath();c.moveTo(0,-26);c.lineTo(6-8*ph,0);c.stroke();
+    // tunic
+    wash(c,tunic,.9,()=>{c.beginPath();
+      c.moveTo(-9,-26);c.quadraticCurveTo(0,-52,9,-26);
+      c.quadraticCurveTo(11,-16,8,-12);c.lineTo(-8,-12);
+      c.quadraticCurveTo(-11,-16,-9,-26);c.closePath();});
+    // head
+    wash(c,"#e7d3ae",.95,()=>{c.beginPath();c.arc(0,-56,8,0,TAU);c.closePath();});
+    // curly hair
+    c.strokeStyle=INK;c.lineWidth=1.4;
+    for(let i=0;i<5;i++){c.beginPath();c.arc(-6+i*3,-63,2.4,0,Math.PI,true);c.stroke();}
+    if(p.kind==="noser"||(jet&&gut>0&&wx-p.x<340)){
+      // hand clamped over the nose — the plate's gesture
+      c.strokeStyle=INK;c.lineWidth=2.4;
+      c.beginPath();c.moveTo(6,-42);c.quadraticCurveTo(10,-52,3,-55);c.stroke();
+      c.fillStyle="#e7d3ae";c.beginPath();c.arc(3,-55,3.4,0,TAU);c.fill();
+      c.strokeStyle=INK;c.lineWidth=1.2;c.beginPath();c.arc(3,-55,3.4,0,TAU);c.stroke();
+    }else{
+      // reaching arm
+      c.strokeStyle=INK;c.lineWidth=2.4;
+      c.beginPath();c.moveTo(4,-40);c.lineTo(16,-34+4*ph);c.stroke();
+    }
+    if(p.kind==="shield"){
+      // blue kite shield held before the face
+      wash(c,SLATE,.95,()=>{c.beginPath();
+        c.moveTo(10,-66);c.quadraticCurveTo(24,-60,22,-38);
+        c.quadraticCurveTo(20,-18,10,-10);c.quadraticCurveTo(4,-30,10,-66);c.closePath();});
+    }
+    if(p.kind==="rider"){
+      // simple horse beneath
+      c.save();c.translate(0,6);
+      wash(c,DKBROWN,.9,()=>{c.beginPath();
+        c.moveTo(-24,-10);c.quadraticCurveTo(0,-18,22,-10);
+        c.quadraticCurveTo(28,-4,20,0);c.lineTo(-20,0);c.closePath();});
+      c.strokeStyle=INK;c.lineWidth=2;
+      c.beginPath();c.moveTo(-16,0);c.lineTo(-18+6*ph,12);c.stroke();
+      c.beginPath();c.moveTo(16,0);c.lineTo(18-6*ph,12);c.stroke();
+      wash(c,DKBROWN,.9,()=>{c.beginPath();c.ellipse(26,-16,7,5,0.3,0,TAU);c.closePath();});
+      c.restore();
+    }
+    // scorch marks
+    if(burnt){c.fillStyle=DKBROWN;c.globalAlpha=.6;
+      for(let i=0;i<3;i++)c.fillRect(-6+i*5,-30+i*4,3,3);c.globalAlpha=1;}
+  }
+  c.restore();
+}
+function drawIvy(c,iv){
+  const x=sx(iv.x);if(x<-60||x>W+60)return;
+  const y=GROUND-4,id=iv.id;
+  c.save();c.translate(x,y);
+  if(iv.got)c.globalAlpha=.3;
+  // stem
+  c.strokeStyle=SAGE;c.lineWidth=4;
+  c.beginPath();c.moveTo(0,0);c.quadraticCurveTo(4,-40,-2,-72);c.stroke();
+  c.strokeStyle=INK;c.lineWidth=1.4;
+  c.beginPath();c.moveTo(0,0);c.quadraticCurveTo(4,-40,-2,-72);c.stroke();
+  // branches with trefoil leaves (the plate's ivy)
+  for(const [bx,by,dir] of[[-2,-70,-1],[0,-52,1],[2,-36,-1]]){
+    c.strokeStyle=SAGE;c.lineWidth=2.6;
+    c.beginPath();c.moveTo(bx,by);c.quadraticCurveTo(bx+dir*16,by-8,bx+dir*28,by-14);c.stroke();
+    leaf(c,bx+dir*28,by-14,dir);
+  }
+  leaf(c,-2,-78,0);
+  c.restore();
+  function leaf(c2,lx,ly,dir){
+    c2.save();c2.translate(lx,ly);c2.rotate(dir*0.4);
+    wash(c2,SAGE,.9,()=>{c2.beginPath();
+      c2.moveTo(0,4);
+      c2.quadraticCurveTo(-7,-2,-3,-7);c2.quadraticCurveTo(0,-11,0,-6);
+      c2.quadraticCurveTo(0,-11,3,-7);c2.quadraticCurveTo(7,-2,0,4);c2.closePath();});
+    c2.restore();
+  }
+}
+function drawWitness(c,w2){
+  const x=sx(w2.x);if(x<-60||x>W+60)return;
+  c.save();c.translate(x,GROUND-8);
+  // robed onlooker holding nose (from the plate's left pair)
+  wash(c,SLATE,.9,()=>{c.beginPath();
+    c.moveTo(-8,0);c.quadraticCurveTo(-10,-34,0,-46);
+    c.quadraticCurveTo(10,-34,8,0);c.closePath();});
+  wash(c,"#e7d3ae",.95,()=>{c.beginPath();c.arc(0,-52,7,0,TAU);c.closePath();});
+  c.strokeStyle=INK;c.lineWidth=2.2;
+  c.beginPath();c.moveTo(-5,-40);c.quadraticCurveTo(-8,-50,-1,-52);c.stroke();
+  c.restore();
+}
+function drawGroundLine(c){
+  // scalloped brown humps, plate-style
+  c.save();
+  c.fillStyle=BROWN;c.globalAlpha=.85;
+  c.beginPath();c.moveTo(0,GROUND+14);
+  let x=-((wx*1)%42)-42;
+  while(x<W+42){
+    c.quadraticCurveTo(x+10,GROUND-2,x+21,GROUND+8);
+    c.quadraticCurveTo(x+32,GROUND+16,x+42,GROUND+8);
+    x+=42;
+  }
+  c.lineTo(W,GROUND+50);c.lineTo(0,GROUND+50);c.closePath();c.fill();
+  c.globalAlpha=1;c.strokeStyle=INK;c.lineWidth=2;
+  x=-((wx*1)%42)-42;
+  c.beginPath();c.moveTo(x,GROUND+8);
+  while(x<W+42){
+    c.quadraticCurveTo(x+10,GROUND-2,x+21,GROUND+8);
+    c.quadraticCurveTo(x+32,GROUND+16,x+42,GROUND+8);
+    x+=42;
+  }
+  c.stroke();
+  // big slow humps
+  for(const h of humps){
+    const hx=sx(h.x);if(hx<-h.w||hx>W+h.w)continue;
+    c.fillStyle=BROWN;c.globalAlpha=.9;
+    c.beginPath();c.moveTo(hx-h.w/2,GROUND+10);
+    c.quadraticCurveTo(hx,GROUND+10-h.h*2,hx+h.w/2,GROUND+10);c.closePath();c.fill();
+    c.globalAlpha=1;c.strokeStyle=INK;c.lineWidth=2;
+    c.beginPath();c.moveTo(hx-h.w/2,GROUND+10);
+    c.quadraticCurveTo(hx,GROUND+10-h.h*2,hx+h.w/2,GROUND+10);c.stroke();
+  }
+  c.restore();
+}
+function drawCaption(c){
+  const [ini,rest]=CAPTIONS[capIdx];
+  c.save();
+  // versal initial: red letter on blue pen-flourish block
+  c.fillStyle=AZUR;c.globalAlpha=.25;c.fillRect(18,CAPT+12,26,34);c.globalAlpha=1;
+  c.strokeStyle=AZUR;c.lineWidth=1;
+  for(let i=0;i<4;i++){c.beginPath();c.moveTo(20,CAPT+15+i*8);c.lineTo(42,CAPT+15+i*8);c.stroke();}
+  c.fillStyle=RUBRIC;c.font="bold 30px Georgia,'Times New Roman',serif";
+  c.fillText(ini,22,CAPT+40);
+  // blackletter-ish body
+  c.fillStyle=INK;c.font="bold italic 15px Georgia,'Times New Roman',serif";
+  c.fillText(rest,52,CAPT+34,W-70);
+  c.restore();
+}
+function render(){
+  ctx.save();
+  if(shake>0&&!REDUCE)ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+  if(pageLayer)ctx.drawImage(pageLayer,0,0,W,H);
+  // caustic puffs (behind figures)
+  for(const q of puffs){
+    ctx.save();ctx.globalAlpha=.4*(q.t/q.tm);
+    ctx.fillStyle=SAGE;
+    ctx.beginPath();ctx.arc(sx(q.x),q.y,q.r*(1.6-q.t/q.tm),0,TAU);ctx.fill();
+    ctx.strokeStyle=INK;ctx.globalAlpha*=.6;ctx.stroke();
+    ctx.restore();
+  }
+  drawJet(ctx);
+  drawGroundLine(ctx);
+  for(const iv of ivies)drawIvy(ctx,iv);
+  for(const w2 of witnesses)drawWitness(ctx,w2);
+  for(const p of pursuers)drawPursuer(ctx,p);
+  drawBonnacon(ctx);
+  // grab warning
+  if(grabT>0.05){
+    ctx.fillStyle=RUBRIC;ctx.globalAlpha=Math.min(1,grabT*2.4);
+    ctx.font="bold 13px 'Courier New'";ctx.textAlign="center";
+    ctx.fillText("CAPITUR!",px,GROUND-110);ctx.textAlign="left";ctx.globalAlpha=1;
+  }
+  drawCaption(ctx);
+  ctx.restore();
+}
+
+/* ---------- fit ---------- */
+function fit(){try{
+  const iw=Math.min(typeof innerWidth!=="undefined"?innerWidth:480,480);
+  const ih=(typeof innerHeight!=="undefined"?innerHeight:800);
+  let chrome=0;
+  for(const id of["marquee","cline","hudbar","foot"]){
+    const el=document.getElementById(id);
+    if(el&&el.offsetHeight)chrome+=el.offsetHeight;
+  }
+  const scale=Math.max(0.4,Math.min(iw/W,(ih-chrome-2)/H));
+  const f=document.getElementById("frame");
+  if(f&&f.style){f.style.width=(W*scale)+"px";f.style.height=(H*scale)+"px";}
+}catch(_){}}
+try{addEventListener("resize",fit);addEventListener("orientationchange",()=>setTimeout(fit,120));}catch(_){}
+setTimeout(fit,0);
+
+/* ---------- boot ---------- */
+bakePage();reset();
+mode="menu";show("startOvl");
+let last=performance.now(),acc=0;const STEP=1/120;
+function loop(now){
+  acc+=Math.min(.1,(now-last)/1000);last=now;
+  while(acc>=STEP){
+    if(mode==="play")update(STEP);
+    else if(mode==="menu"){stride+=STEP*4;} // idle canter on the title
+    acc-=STEP;
+  }
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
